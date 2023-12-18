@@ -180,7 +180,10 @@ final class LambdaRuntime
     private function sendResponse(string $invocationId, $responseData): void
     {
         $url = "http://{$this->apiUrl}/2018-06-01/runtime/invocation/$invocationId/response";
-        $this->postJson($url, $responseData);
+
+        \strlen($responseData['body']) > 6291456 // 6MiB
+            ? $this->postLargeResponse($url, $responseData)
+            : $this->postJson($url, $responseData);
     }
 
     /**
@@ -261,8 +264,10 @@ final class LambdaRuntime
     /**
      * @param mixed $data
      */
-    private function postJson(string $url, $data): void
-    {
+    private function postJson(
+        string $url,
+        mixed $data
+    ): void {
         $jsonData = json_encode($data);
         if ($jsonData === false) {
             throw new Exception(sprintf(
@@ -271,6 +276,48 @@ final class LambdaRuntime
             ));
         }
 
+       $this->sendPost(
+           url: $url,
+           postFields: $jsonData,
+              headers: [
+                'Content-Type: application/json',
+                'Content-Length: ' . \strlen($jsonData),
+              ]
+       );
+    }
+
+    /**
+     * POSTs a "large" (>6MiB) response to the Lambda runtime API via "streaming".
+     *
+     * @link https://docs.aws.amazon.com/lambda/latest/dg/runtimes-custom.html#runtimes-custom-response-streaming
+     */
+    private function postLargeResponse(
+        string $url,
+        mixed $data,
+    ): void {
+        $headers = [
+            'Lambda-Runtime-Function-Response-Mode: streaming',
+            'Transfer-Encoding: chunked',
+        ];
+
+        foreach ($data['headers'] as $key => $value) {
+            if ($key !== 'Content-Length' && $key !== 'content-length') {
+                $headers[] = $key . ': ' . $value;
+            }
+        }
+
+        $this->sendPost(
+            url: $url,
+            postFields: $data['body'],
+            headers: $headers,
+        );
+    }
+
+    private function sendPost(
+        string $url,
+        mixed $postFields,
+        array $headers
+    ): void {
         if ($this->curlHandleResult === null) {
             $this->curlHandleResult = curl_init();
             curl_setopt($this->curlHandleResult, CURLOPT_CUSTOMREQUEST, 'POST');
@@ -279,12 +326,11 @@ final class LambdaRuntime
         }
 
         curl_setopt($this->curlHandleResult, CURLOPT_URL, $url);
-        curl_setopt($this->curlHandleResult, CURLOPT_POSTFIELDS, $jsonData);
-        curl_setopt($this->curlHandleResult, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/json',
-            'Content-Length: ' . strlen($jsonData),
-        ]);
+        curl_setopt($this->curlHandleResult, CURLOPT_POSTFIELDS, $postFields);
+        curl_setopt($this->curlHandleResult, CURLOPT_HTTPHEADER, $headers);
+
         curl_exec($this->curlHandleResult);
+
         if (curl_errno($this->curlHandleResult) > 0) {
             $errorMessage = curl_error($this->curlHandleResult);
             $this->closeCurlHandleResult();
