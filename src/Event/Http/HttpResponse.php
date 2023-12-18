@@ -90,6 +90,19 @@ final class HttpResponse
     }
 
     /**
+     * Builds a "large" (>6MiB) response to use when "streaming", since that's the only way to return "large" responses.
+     *
+     * @return array<string, mixed>
+     */
+    public function toLargeResponse(): array {
+        return [
+            'statusCode' => $this->statusCode,
+            'headers' => $this->headers,
+            'body' => $this->body,
+        ];
+    }
+
+    /**
      * See https://github.com/zendframework/zend-diactoros/blob/754a2ceb7ab753aafe6e3a70a1fb0370bde8995c/src/Response/SapiEmitterTrait.php#L96
      */
     private function capitalizeHeaderName(string $name): string

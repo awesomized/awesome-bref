@@ -47,6 +47,14 @@ final class HttpRequestEvent implements LambdaEvent
         return $this->event;
     }
 
+    /**
+     * Responses >6MiB (up to 20MiB) must be "streamed" to the Lambda response URL.
+     */
+    public function doesBodyRequireLargeResponse(): bool
+    {
+        return \strlen($this->getBody()) > 6291456; // 6MiB
+    }
+
     public function getBody(): string
     {
         $requestBody = $this->event['body'] ?? '';
