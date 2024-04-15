@@ -181,7 +181,7 @@ final class LambdaRuntime
     {
         $url = "http://{$this->apiUrl}/2018-06-01/runtime/invocation/$invocationId/response";
 
-        \strlen($responseData['body']) > 6291456 // 6MiB
+        \strlen($responseData['body'] ?? '') > 6291456 // 6MiB
             ? $this->postLargeResponse($url, $responseData)
             : $this->postJson($url, $responseData);
     }
