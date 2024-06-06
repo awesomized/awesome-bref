@@ -73,10 +73,20 @@ final class FpmHandler extends HttpHandler
         }
 
         /**
+         * --allow-to-run-as-root: in a Lambda context, we need to run as root
          * --nodaemonize: we want to keep control of the process
          * --force-stderr: force logs to be sent to stderr, which will allow us to send them to CloudWatch
          */
-        $this->fpm = new Process(['php-fpm', '--nodaemonize', '--force-stderr', '--fpm-config', $this->configFile]);
+        $this->fpm = new Process(
+            [
+                'php-fpm',
+                '--allow-to-run-as-root',
+                '--nodaemonize',
+                '--force-stderr',
+                '--fpm-config',
+                $this->configFile
+            ]
+        );
 
         $this->fpm->setTimeout(null);
         $this->fpm->start(function ($type, $output): void {
