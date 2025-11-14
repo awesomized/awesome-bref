@@ -10,6 +10,7 @@ use CurlHandle;
 use Exception;
 use JsonException;
 use Psr\Http\Server\RequestHandlerInterface;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -81,21 +82,38 @@ final class LambdaRuntime
     {
         [$event, $context] = $this->waitNextInvocation();
 
-        Bref::triggerHooks('beforeInvoke');
-        Bref::events()->beforeInvoke($handler, $event, $context);
-
-        $this->ping();
+        // Expose the context in an environment variable
+        $this->setEnv('LAMBDA_INVOCATION_CONTEXT', json_encode($context, JSON_THROW_ON_ERROR));
 
         try {
+            ColdStartTracker::invocationStarted();
+
+            Bref::triggerHooks('beforeInvoke');
+            Bref::events()->beforeInvoke($handler, $event, $context);
+
+            $this->ping();
+
             $result = $this->invoker->invoke($handler, $event, $context);
 
             $this->sendResponse($context->getAwsRequestId(), $result);
-
-            Bref::events()->afterInvoke($handler, $event, $context, $result);
         } catch (Throwable $e) {
             $this->signalFailure($context->getAwsRequestId(), $e);
 
-            Bref::events()->afterInvoke($handler, $event, $context, null, $e);
+            try {
+                Bref::events()->afterInvoke($handler, $event, $context, null, $e);
+            } catch (Throwable $e) {
+                $this->logError($e, $context->getAwsRequestId());
+            }
+
+            return false;
+        }
+
+        // Any error in the afterInvoke hook happens after the response has been sent,
+        // we can no longer mark the invocation as failed. Instead we log the error.
+        try {
+            Bref::events()->afterInvoke($handler, $event, $context, $result);
+        } catch (Throwable $e) {
+            $this->logError($e, $context->getAwsRequestId());
 
             return false;
         }
@@ -194,33 +212,7 @@ final class LambdaRuntime
      */
     private function signalFailure(string $invocationId, Throwable $error): void
     {
-        $stackTraceAsArray = explode(PHP_EOL, $error->getTraceAsString());
-        $errorFormatted = [
-            'errorType' => get_class($error),
-            'errorMessage' => $error->getMessage(),
-            'stack' => $stackTraceAsArray,
-        ];
-
-        if ($error->getPrevious() !== null) {
-            $previousError = $error;
-            $previousErrors = [];
-            do {
-                $previousError = $previousError->getPrevious();
-                $previousErrors[] = [
-                    'errorType' => get_class($previousError),
-                    'errorMessage' => $previousError->getMessage(),
-                    'stack' => explode(PHP_EOL, $previousError->getTraceAsString()),
-                ];
-            } while ($previousError->getPrevious() !== null);
-
-            $errorFormatted['previous'] = $previousErrors;
-        }
-
-        // Log the exception in CloudWatch
-        // We aim to use the same log format as what we can see when throwing an exception in the NodeJS runtime
-        // See https://github.com/brefphp/bref/pull/579
-        /** @noinspection JsonEncodingApiUsageInspection */
-        echo $invocationId . "\tInvoke Error\t" . json_encode($errorFormatted) . PHP_EOL;
+        $this->logError($error, $invocationId);
 
         /**
          * Send an "error" Lambda response (see https://github.com/brefphp/bref/pull/1483).
@@ -237,7 +229,7 @@ final class LambdaRuntime
             $this->postJson($url, [
                 'errorType' => get_class($error),
                 'errorMessage' => $error->getMessage(),
-                'stackTrace' => $stackTraceAsArray,
+                'stackTrace' => explode(PHP_EOL, $error->getTraceAsString()),
             ]);
         }
     }
@@ -452,12 +444,15 @@ final class LambdaRuntime
             return;
         }
 
+        $isColdStart = ColdStartTracker::currentInvocationIsUserFacingColdStart() ? '1' : '0';
+        $isWarmInvocation = $isColdStart === '0' ? '1' : '0';
+
         /**
          * Here is the content sent to the Bref analytics server.
-         * It signals an invocation happened on which layer.
+         * It signals an invocation happened on which layer and whether it was a cold start.
          * Nothing else is sent.
          *
-         * `Invocations_100` is used to signal that this is 1 ping equals 100 invocations.
+         * `Invocations_100` is used to signal that 1 ping equals 100 invocations.
          * We could use statsd sample rate system like this:
          * `Invocations:1|c|@0.01`
          * but this doesn't seem to be compatible with the bridge that forwards
@@ -465,7 +460,7 @@ final class LambdaRuntime
          *
          * See https://github.com/statsd/statsd/blob/master/docs/metric_types.md for more information.
          */
-        $message = "Invocations_100:1|c\nLayer_{$this->layer}_100:1|c";
+        $message = "Invocations_100:1|c\nLayer_{$this->layer}_100:1|c\nCold_100:$isColdStart|c\nWarm_100:$isWarmInvocation|c";
 
         $sock = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
         // This IP address is the Bref server.
@@ -473,5 +468,47 @@ final class LambdaRuntime
         // or execution time.
         socket_sendto($sock, $message, strlen($message), 0, '3.219.198.164', 8125);
         socket_close($sock);
+    }
+
+    private function setEnv(string $name, string $value): void
+    {
+        $_SERVER[$name] = $_ENV[$name] = $value;
+        if (! putenv("$name=$value")) {
+            throw new RuntimeException("Failed to set environment variable $name");
+        }
+    }
+
+    /**
+     * Log the exception in CloudWatch
+     * We aim to use the same log format as what we can see when throwing an exception in the NodeJS runtime
+     *
+     * @see https://github.com/brefphp/bref/pull/579
+     */
+    private function logError(Throwable $error, string $invocationId): void
+    {
+        $stackTraceAsArray = explode(PHP_EOL, $error->getTraceAsString());
+        $errorFormatted = [
+            'errorType' => get_class($error),
+            'errorMessage' => $error->getMessage(),
+            'stack' => $stackTraceAsArray,
+        ];
+
+        if ($error->getPrevious() !== null) {
+            $previousError = $error;
+            $previousErrors = [];
+            do {
+                $previousError = $previousError->getPrevious();
+                $previousErrors[] = [
+                    'errorType' => get_class($previousError),
+                    'errorMessage' => $previousError->getMessage(),
+                    'stack' => explode(PHP_EOL, $previousError->getTraceAsString()),
+                ];
+            } while ($previousError->getPrevious() !== null);
+
+            $errorFormatted['previous'] = $previousErrors;
+        }
+
+        /** @noinspection JsonEncodingApiUsageInspection */
+        echo $invocationId . "\tInvoke Error\t" . json_encode($errorFormatted) . PHP_EOL;
     }
 }

@@ -35,8 +35,7 @@ const sections = [
         name: 'Bref and AWS deployments',
         features: [
             { name: 'The Bref open-source project, its documentation and framework integrations', tiers: { OpenSource: true, Pro: true, Enterprise: true } },
-            { name: 'Deploy your applications to your AWS account', tiers: { OpenSource: true, Pro: true, Enterprise: true } },
-            { name: ' Tailor-made AWS Lambda runtimes and PHP extensions optimized for your project', tiers: { Enterprise: 'Optional' } },
+            { name: 'Tailor-made AWS Lambda runtimes and PHP extensions optimized for your project', tiers: { Enterprise: 'Optional' } },
             { name: 'Appear as an open-source sponsor 💙', tiers: { Pro: 'Gold sponsor', Enterprise: 'Premium sponsor' } },
         ],
     },
@@ -47,8 +46,15 @@ const sections = [
             { name: 'Expert support via Slack and Email', tiers: { Pro: true, Enterprise: true } },
             { name: 'Architecture design and review in Zoom', tiers: { Enterprise: true } },
             { name: 'GitHub/GitLab infrastructure code review', tiers: { Enterprise: true } },
-            { name: 'Unlimited access to the <a class="underline" href="https://serverless-visually-explained.com/">Serverless Visually Explained</a> course', tiers: { Enterprise: true } },
+            { name: 'Unlimited access to the <a class="link" href="https://serverless-visually-explained.com/">Serverless Visually Explained</a> course', tiers: { Enterprise: true } },
             { name: 'Onboarding workshop online or on-site', tiers: { Enterprise: 'Optional' } },
+        ],
+    },
+    {
+        name: 'Bref integrations',
+        features: [
+            { name: '<a href="/sentry" class="link">Sentry integration</a> license for unlimited projects', tiers: { Pro: true, Enterprise: true } },
+            { name: '<a href="/xray" class="link">X-Ray integration</a> license for unlimited projects', tiers: { Pro: true, Enterprise: true } },
         ],
     },
 ]
@@ -62,13 +68,13 @@ export default function Plans() {
         <div>
             <div className="mx-auto max-w-4xl text-center">
                 <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl">
-                    Get more with Bref Pro and Enterprise
+                    Expert AWS support and consulting
                 </h1>
             </div>
             <p className="mx-auto mt-6 max-w-2xl text-center text-lg leading-8 text-gray-600">
                 Bref is a free and open-source project <a className="link" href="https://github.com/brefphp/bref">hosted on GitHub</a>.
                 <br/>
-                Bref Pro and Bref Enterprise are support plans offered by <a className="link" href="https://null.tc">Null</a>, the company behind Bref.
+                With Bref Pro and Bref Enterprise, get direct support and consulting from <a className="link" href="https://mnapoli.fr/">Matthieu</a>, the creator of Bref.
             </p>
 
             {/* xs to lg */}

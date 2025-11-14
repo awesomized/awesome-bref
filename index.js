@@ -47,11 +47,14 @@ class ServerlessPlugin {
             .filter(name => !name.startsWith('arm-'));
         // Console runtimes must have a PHP version provided
         this.runtimes = this.runtimes.filter(name => name !== 'console');
-        this.runtimes.push('php-80-console', 'php-81-console', 'php-82-console', 'php-83-console');
+        this.runtimes.push('php-80-console', 'php-81-console', 'php-82-console', 'php-83-console', 'php-84-console');
 
         this.checkCompatibleRuntime();
 
         serverless.configSchemaHandler.schema.definitions.awsLambdaRuntime.enum.push(...this.runtimes);
+        serverless.configSchemaHandler.defineTopLevelProperty('bref', {
+            type: 'object',
+        });
 
         // Declare `${bref:xxx}` variables
         // See https://www.serverless.com/framework/docs/guides/plugins/custom-variables
@@ -147,17 +150,11 @@ class ServerlessPlugin {
             'bref:local:run': () => runLocal(this.serverless, options),
             'bref:layers:show': () => listLayers(this.serverless, utils.log),
             'before:logs:logs': () => {
-                /** @type {typeof import('chalk')} */
-                // @ts-ignore
-                const chalk = require.main.require('chalk');
-                utils.log(chalk.gray('View, tail, and search logs from all functions with https://dashboard.bref.sh'));
+                utils.log(this.gray('View, tail, and search logs from all functions with https://bref.sh/cloud'));
                 utils.log();
             },
             'before:metrics:metrics': () => {
-                /** @type {typeof import('chalk')} */
-                // @ts-ignore
-                const chalk = require.main.require('chalk');
-                utils.log(chalk.gray('View all your application\'s metrics with https://dashboard.bref.sh'));
+                utils.log(this.gray('View all your application\'s metrics with https://bref.sh/cloud'));
                 utils.log();
             },
         };
@@ -166,11 +163,8 @@ class ServerlessPlugin {
             const command = serverless.processedInput.commands[0] || '';
             // On successful deploy
             if (command.startsWith('deploy') && code === 0) {
-                /** @type {typeof import('chalk')} */
-                // @ts-ignore
-                const chalk = require.main.require('chalk');
                 utils.log();
-                utils.log(chalk.gray('Want a better experience than the AWS console? Try out https://dashboard.bref.sh'));
+                utils.log(this.gray('Want a better experience than the AWS console? Try out https://bref.sh/cloud'));
             }
         });
     }
@@ -377,6 +371,16 @@ class ServerlessPlugin {
                 // These errors should not stop the execution
             }
         });
+    }
+
+    /**
+     * @param {string} text
+     * @returns {string}
+     */
+    gray(text) {
+        const grayText = "\x1b[90m";
+        const reset = "\x1b[0m";
+        return `${grayText}${text}${reset}`;
     }
 }
 

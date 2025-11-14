@@ -4,14 +4,20 @@ By default, AWS Lambda publishes all logs and general metrics (HTTP response tim
 
 It is possible to view these logs and metrics directly in the [AWS console](https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1). However, the CloudWatch UI can be complex and overwhelming.
 
-As an alternative, we can use the [Bref Dashboard](https://dashboard.bref.sh/?ref=bref) to view these logs and metrics. It provides a simpler UI designed for serverless PHP applications.
+As an alternative, we can use [Bref Cloud](/cloud) or the [Bref Dashboard](https://dashboard.bref.sh/?ref=bref) to view these logs and metrics. It provides a simpler UI designed for serverless PHP applications.
 
-For advanced metrics and profiling, we can use [Tideways](https://tideways.com/?ref=bref), or [Sentry](https://sentry.io/?ref=bref) if we only want error tracking. Other monitoring tools specialized for distributed serverless applications are also available, like [Epsagon](https://epsagon.com/?ref=bref) or [Thundra](https://www.thundra.io/?ref=bref), but their compatibility with PHP is usually limited. [Serverless.com's Dashboard and Console](https://www.serverless.com/) are not compatible with PHP.
+For advanced metrics and profiling, we can use [Tideways](https://tideways.com/?ref=bref), or [Sentry's performance monitoring](/sentry). Note that [Serverless.com's Dashboard](https://www.serverless.com/) is not compatible with PHP.
 
 To summarize:
 
-- **General monitoring**: CloudWatch, [Bref Dashboard](https://dashboard.bref.sh/?ref=bref)
-- **Advanced monitoring and profiling**: [Tideways](https://tideways.com/?ref=bref)
+- **General monitoring**: [Bref Cloud](/cloud), CloudWatch, or [Bref Dashboard](https://dashboard.bref.sh/?ref=bref)
+- **Advanced monitoring and profiling**: [Tideways](https://tideways.com/?ref=bref), [Sentry](/sentry)
+
+## Bref Cloud
+
+[Bref Cloud](/cloud) is an all-in-one platform for serverless PHP applications. It provides a simple UI to view logs, metrics, and errors, and it is designed specifically for PHP applications running on AWS Lambda.
+
+[Learn more about Bref Cloud](/cloud).
 
 ## Bref Dashboard
 

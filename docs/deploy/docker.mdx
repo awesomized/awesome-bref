@@ -1,6 +1,6 @@
 import { Callout } from 'nextra/components';
 
-# Deploying Docker images
+# Deploying container images
 
 <Callout type="warning">
     Are you starting with Bref? Deploy **without Docker first**. It's easier and faster. You can always switch to Docker later.
@@ -10,9 +10,9 @@ import { Callout } from 'nextra/components';
 
 By default, Bref deploys to AWS Lambda using zip archives, which Lambda will run in an Amazon Linux environment. This is how AWS Lambda works out of the box, and it works great.
 
-However, AWS Lambda also supports **deploying and running Docker container images**.
+However, AWS Lambda also supports **deploying and running container images** (aka Docker images).
 
-We recommend Docker **as a last resort**, as it is less practical and usually comes with slightly worse cold starts. Yes, Docker is great and probably sounds familiar, but is often not worth it on Lambda.
+We don't recommend starting out with containers, as it is less practical and requires some knowledge of Docker. Yes, Docker is great and probably sounds familiar, but is often not worth it on Lambda.
 
 You should consider deploying using Docker when:
 
@@ -32,7 +32,7 @@ Bref helps you deploy using Docker images by offering base images that work on A
 FROM bref/php-81-fpm:2
 
 # Copy the source code in the image
-COPY .. /var/task
+COPY . /var/task
 
 # Configure the handler file (the entrypoint that receives all HTTP requests)
 CMD ["public/index.php"]
@@ -51,6 +51,14 @@ Bref offers the following base images:
 - `bref/php-xx-fpm:2`: PHP-FPM to run HTTP applications
 - `bref/php-xx-console:2`: to run PHP CLI commands
 - `bref/php-xx:2`: to run [PHP functions](../runtimes/function.mdx)
+
+<Callout type="warning">
+    The `CMD` instruction in `Dockerfile` must contain a valid JSON array. This is why you must escape any `\` character. This is important for PHP class names, for example when using Laravel Octane:
+
+    ```dockerfile filename="Dockerfile"
+    CMD ["Bref\\LaravelBridge\\Http\\OctaneHandler"]
+    ```
+</Callout>
 
 ### Extra PHP extensions
 
