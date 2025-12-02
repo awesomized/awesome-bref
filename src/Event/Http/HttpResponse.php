@@ -101,7 +101,8 @@ final class HttpResponse
      *
      * @return array<string, mixed>
      */
-    public function toLargeResponse(): array {
+    public function toLargeResponse(): array
+    {
         return [
             'statusCode' => $this->statusCode,
             'headers' => $this->headers,
