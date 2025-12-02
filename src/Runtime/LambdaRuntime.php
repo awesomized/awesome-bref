@@ -306,9 +306,9 @@ final class LambdaRuntime
             headers: [
                 'Content-Type: application/json',
                 'Content-Length: ' . \strlen($jsonData),
-                ...$headers
+                ...$headers,
             ]
-       );
+        );
     }
 
     /**
