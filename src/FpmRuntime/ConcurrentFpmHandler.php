@@ -1,21 +1,21 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace Bref\FpmRuntime;
 
 use Bref\Context\Context;
-use Bref\Event\Http\FastCgi\FastCgiCommunicationFailed;
-use Bref\Event\Http\FastCgi\FastCgiRequest;
-use Bref\Event\Http\FastCgi\Timeout;
 use Bref\Event\Http\HttpHandler;
+use Bref\Event\Http\HttpRequestEvent;
+use Bref\Event\Http\HttpResponse;
+use Bref\FpmRuntime\FastCgi\FastCgiCommunicationFailed;
+use Bref\FpmRuntime\FastCgi\FastCgiRequest;
+use Bref\FpmRuntime\FastCgi\Timeout;
 use Exception;
 use hollodotme\FastCGI\Client;
 use hollodotme\FastCGI\Exceptions\TimedoutException;
 use hollodotme\FastCGI\Interfaces\ProvidesRequestData;
 use hollodotme\FastCGI\Interfaces\ProvidesResponseData;
 use hollodotme\FastCGI\SocketConnections\UnixDomainSocket;
-use Symfony\Component\Process\Process;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -24,7 +24,7 @@ use Throwable;
  * This is a copy-and-paste from FpmHandler, with modifications to support lambdas running on managed images, where a
  * single process may handle concurrent requests. Primarily, this means that this class accepts that PHP-FPM may
  * already be running and will not attempt to manage lifecycle of the process unless it was the process that started it.
- * A non-owning instance will manage its own connection to php-fpm only
+ * A non-owning instance will manage its own _connection_ to php-fpm only, not the php-fpm process itself.
  *
  * Note that lambda function concurrency must be aligned with the php-fpm max_clients configuration. There must be
  * an equal or higher number of php-fpm children than the maximum number of concurrent lambda executions. This is not
@@ -36,15 +36,11 @@ final class ConcurrentFpmHandler extends HttpHandler
     private const CONFIG = '/opt/bref/etc/php-fpm.conf';
     private const LOCK_FILE = '/tmp/.bref/php-fpm.lock';
 
-    /** @var Client|null */
-    private $client;
-    /** @var UnixDomainSocket */
-    private $connection;
-    /** @var string */
-    private $handler;
-    /** @var string */
-    private $configFile;
-    /** @var Process|null */
+    private ?Client $client;
+    private UnixDomainSocket $connection;
+    private string $handler;
+    private string $configFile;
+    /** @var resource|null */
     private $fpm;
 
     public function __construct(string $handler, string $configFile = self::CONFIG)
@@ -58,35 +54,47 @@ final class ConcurrentFpmHandler extends HttpHandler
      */
     public function start(): void
     {
-        if (!is_dir(dirname(self::LOCK_FILE))) {
+        if (! is_dir(dirname(self::LOCK_FILE))) {
             mkdir(dirname(self::LOCK_FILE));
         }
 
         $lockfile = fopen(self::LOCK_FILE, 'w');
 
         // wait until we can acquire an exclusive lock before starting. this is to ensure that a single php
-        // process has ownership of a single php-fpm process
+        // process has ownership of the main php-fpm process
         flock($lockfile, LOCK_EX);
 
         // if php-fpm is not running, we have a lock and can start up now
-        if (!$this->isReady()) {
+        if (! $this->isReady()) {
             if (! is_dir(dirname(self::SOCKET))) {
                 mkdir(dirname(self::SOCKET));
             }
 
-            echo "starting new fpm process - " . getmypid() . "\n";
+            echo 'starting new fpm process - ' . getmypid() . "\n";
 
             /**
+             * --allow-to-run-as-root: in a Lambda context, we run as root
              * --nodaemonize: we want to keep control of the process
              * --force-stderr: force logs to be sent to stderr, which will allow us to send them to CloudWatch
              */
-            $this->fpm = new Process(['php-fpm', '--nodaemonize', '--force-stderr', '--fpm-config', $this->configFile]);
+            $resource = @proc_open(
+                [
+                    'php-fpm',
+                    '--allow-to-run-as-root',
+                    '--nodaemonize',
+                    '--force-stderr',
+                    '--fpm-config',
+                    $this->configFile,
+                ],
+                [],
+                $pipes
+            );
 
-            $this->fpm->setTimeout(null);
-            $this->fpm->start(function ($type, $output): void {
-                // Send any PHP-FPM log to CloudWatch
-                echo $output;
-            });
+            if (! is_resource($resource)) {
+                throw new RuntimeException('PHP-FPM failed to start');
+            }
+
+            $this->fpm = $resource;
         }
 
         $this->waitUntilReady();
@@ -102,12 +110,11 @@ final class ConcurrentFpmHandler extends HttpHandler
 
     public function stop(): void
     {
-        if ($this->fpm && $this->fpm?->isRunning()) {
+        if ($this->isFpmRunning()) {
             // Give it less than a second to stop (500ms should be plenty enough time)
             // this is for the case where the script timed out: we reserve 1 second before the end
             // of the Lambda timeout, so we must kill everything and restart FPM in 1 second.
-            // Note: Symfony will first try sending SIGTERM (15) and then SIGKILL (9)
-            $this->fpm->stop(0.5);
+            $this->stopFpm(0.5);
             if ($this->isReady()) {
                 throw new Exception('PHP-FPM cannot be stopped');
             }
@@ -135,8 +142,9 @@ final class ConcurrentFpmHandler extends HttpHandler
             $socketId = $this->client->sendAsyncRequest($this->connection, $request);
 
             $response = $this->client->readResponse($socketId, $timeoutDelayInMs);
-        } catch (TimedoutException $e) {
-            echo "The PHP script timed out. Bref will now restart PHP-FPM to start from a clean slate and flush the PHP logs.\nTimeouts can happen for example when trying to connect to a remote API or database, if this happens continuously check for those.\nIf you are using a RDS database, read this: https://bref.sh/docs/environment/database.html#accessing-the-internet\n";
+        } catch (TimedoutException) {
+            echo "{$context->getAwsRequestId()} The PHP script timed out. Bref will now restart PHP-FPM to "
+                . 'start from a clean slate and flush the PHP logs.';
 
             /**
              * Restart FPM so that the blocked script is 100% terminated and that its logs are flushed to stderr.
@@ -161,7 +169,8 @@ final class ConcurrentFpmHandler extends HttpHandler
             throw new Timeout($timeoutDelayInMs, $context->getAwsRequestId());
         } catch (Throwable $e) {
             printf(
-                "Error communicating with PHP-FPM to read the HTTP response. Bref will restart PHP-FPM now. Original exception message: %s %s\n",
+                'Error communicating with PHP-FPM to read the HTTP response. Bref will restart PHP-FPM now. '
+                . "Original exception message: %s %s\n",
                 get_class($e),
                 $e->getMessage()
             );
@@ -192,11 +201,11 @@ final class ConcurrentFpmHandler extends HttpHandler
     private function ensureStillRunning(): void
     {
         // if this process is not the owner of the php-fpm process, just no-op
-        if (!$this->fpm) {
+        if (! $this->fpm) {
             return;
         }
 
-        if (! $this->fpm->isRunning()) {
+        if (! $this->isFpmRunning()) {
             throw new Exception('PHP-FPM has stopped for an unknown reason');
         }
     }
@@ -216,8 +225,9 @@ final class ConcurrentFpmHandler extends HttpHandler
             }
 
             // If the process has crashed we can stop immediately
-            if (! $this->fpm?->isRunning()) {
-                throw new Exception('PHP-FPM failed to start: ' . PHP_EOL . $this->fpm->getOutput() . PHP_EOL . $this->fpm->getErrorOutput());
+            if ($this->fpm && ! $this->isFpmRunning()) {
+                // The output of FPM is in the stderr of the Lambda process
+                throw new Exception('PHP-FPM failed to start');
             }
         }
     }
@@ -241,8 +251,8 @@ final class ConcurrentFpmHandler extends HttpHandler
         $request->setServerPort($event->getServerPort());
         $request->setCustomVar('PATH_INFO', $event->getPath());
         $request->setCustomVar('QUERY_STRING', $event->getQueryString());
-        $request->setCustomVar('LAMBDA_INVOCATION_CONTEXT', json_encode($context));
-        $request->setCustomVar('LAMBDA_REQUEST_CONTEXT', json_encode($event->getRequestContext()));
+        $request->setCustomVar('LAMBDA_INVOCATION_CONTEXT', json_encode($context, JSON_THROW_ON_ERROR));
+        $request->setCustomVar('LAMBDA_REQUEST_CONTEXT', json_encode($event->getRequestContext(), JSON_THROW_ON_ERROR));
 
         $contentType = $event->getContentType();
         if ($contentType) {
@@ -250,7 +260,7 @@ final class ConcurrentFpmHandler extends HttpHandler
         }
         foreach ($event->getHeaders() as $header => $values) {
             foreach ($values as $value) {
-                $key = 'HTTP_' . strtoupper(str_replace('-', '_', $header));
+                $key = 'HTTP_' . strtoupper(str_replace('-', '_', (string) $header));
                 $request->setCustomVar($key, $value);
             }
         }
@@ -264,5 +274,38 @@ final class ConcurrentFpmHandler extends HttpHandler
     private function getResponseHeaders(ProvidesResponseData $response): array
     {
         return array_change_key_case($response->getHeaders(), CASE_LOWER);
+    }
+
+    public function stopFpm(float $timeout): void
+    {
+        if (! $this->fpm) {
+            return;
+        }
+
+        $timeoutMicro = microtime(true) + $timeout;
+        if ($this->isFpmRunning()) {
+            $pid = proc_get_status($this->fpm)['pid'];
+            // SIGTERM
+            @posix_kill($pid, 15);
+            do {
+                usleep(1000);
+                // @phpstan-ignore-next-line
+            } while ($this->isFpmRunning() && microtime(true) < $timeoutMicro);
+
+            // @phpstan-ignore-next-line
+            if ($this->isFpmRunning()) {
+                // SIGKILL
+                @posix_kill($pid, 9);
+                usleep(1000);
+            }
+        }
+
+        proc_close($this->fpm);
+        $this->fpm = null;
+    }
+
+    private function isFpmRunning(): bool
+    {
+        return $this->fpm && proc_get_status($this->fpm)['running'];
     }
 }
