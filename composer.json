@@ -70,5 +70,10 @@
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true
         }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-awesome-bref-v3": "3.0-dev"
+        }
     }
 }
